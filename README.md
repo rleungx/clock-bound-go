@@ -1,209 +1,146 @@
 # clock-bound-go
 
-A Go client for [AWS ClockBound](https://github.com/aws/clock-bound), with no CGO
-or third-party Go dependencies. It samples the hardware counter and reads the
-daemon's calibration through read-only shared memory.
+A Go client for [AWS ClockBound](https://github.com/aws/clock-bound). It returns
+an interval that bounds UTC time at the instant of each sample.
 
-The client supports **Linux amd64 and arm64**, ClockBound **v3**, and VMClock
-**v1** disruption markers. A ClockBound daemon must run on the same host.
-Default paths are `/var/run/clockbound/shm1` and `/dev/vmclock0`. ClockBound v1/v2
-segments and unverified version ranges are rejected. The currently verified
-header version range is `3..3`. This project implements the client, not a Go daemon.
+It requires a ClockBound daemon on the same host. There are no CGO or
+third-party Go dependencies.
 
-## Quick start
+## Requirements
 
-### 1. Prepare the Linux host
+- Go 1.22 or later.
+- Linux on amd64 or arm64.
+- A running ClockBound v3 daemon (tested with 3.0.0-beta.0).
+- Read access to `/var/run/clockbound/shm1` and, when the daemon enables VMClock,
+  `/dev/vmclock0`.
 
-- Use Linux amd64 or arm64 and Go 1.22 or later.
-- Install and run the official AWS ClockBound daemon on the same host. Follow
-  the [upstream daemon setup instructions](https://github.com/aws/clock-bound/blob/526b8a89d2a8b8ac461a3ab61cadc8c93d48a479/docs/clockbound-daemon.md)
-  for the required clock source, permissions, and service configuration.
-- Use a daemon that writes the verified v3 header range `3..3`. This client was
-  checked against ClockBound 3.0.0-beta.0; v1/v2 daemons are incompatible.
-- Give the application read access to `/var/run/clockbound/shm1` and, when the
-  daemon enables disruption detection, `/dev/vmclock0`.
+Follow the [daemon setup instructions](https://github.com/aws/clock-bound/blob/526b8a89d2a8b8ac461a3ab61cadc8c93d48a479/docs/clockbound-daemon.md)
+to configure the host. The Go package does not install or start the daemon.
 
-The Go package reads calibration from the daemon. Installing the package alone
-will not start a daemon or synchronize the host clock.
+## Install
 
-### 2. Install the Go package
-
-Inside your application's Go module:
+Run this in your application's Go module:
 
 ```sh
 go get github.com/rleungx/clock-bound-go@latest
 ```
 
-If the repository is private, your GitHub account must have access. Configure
-Git authentication for GitHub, then tell Go to fetch this module privately
-before running `go get`:
+For a new application, run `go mod init example.com/myapp` first.
 
-```sh
-GOPRIVATE=github.com/rleungx/clock-bound-go go get github.com/rleungx/clock-bound-go@latest
-```
+## Read the time
 
-If your environment already sets `GOPRIVATE`, add this module to its existing
-comma-separated patterns. Authentication and `GOPRIVATE` configuration are also
-needed when installing the CLI from a private repository.
-
-If this is a new application, run `go mod init example.com/myapp` first.
-Before a release is tagged, Go resolves `@latest` to a pseudo-version of the
-repository's default branch. Commit the resulting `go.mod` to pin that revision.
-
-### 3. Read a bounded timestamp
-
-Save this as `main.go`, then run `go run .` on the prepared Linux host:
+Save this as `main.go` and run `go run .` on the configured Linux host:
 
 ```go
 package main
 
 import (
-    "fmt"
-    "log"
+	"fmt"
+	"log"
 
-    clockbound "github.com/rleungx/clock-bound-go"
+	clockbound "github.com/rleungx/clock-bound-go"
 )
 
 func main() {
-    client, err := clockbound.New()
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer client.Close()
+	if err := sample(); err != nil {
+		log.Fatal(err)
+	}
+}
 
-    now, err := client.Now()
-    if err != nil {
-        log.Fatal(err)
-    }
-    if !now.IsTrusted() {
-        log.Fatalf("no bounded-time guarantee: %s", now.Status)
-    }
-    fmt.Printf("true time at the sample was in [%s, %s], bound=%s\n",
-        now.Earliest, now.Latest, now.ErrorBound)
+func sample() error {
+	client, err := clockbound.New()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	now, err := client.Now()
+	if err != nil {
+		return err
+	}
+	if !now.IsTrusted() {
+		return fmt.Errorf("clock is not trusted: %s", now.Status)
+	}
+
+	fmt.Printf("earliest: %s\nlatest:   %s\nstatus:   %s\nbound:    %s\n",
+		now.Earliest, now.Latest, now.Status, now.ErrorBound)
+	return nil
 }
 ```
 
-A `Client` is safe for concurrent calls to `Now` and `Close`. Close it when it is
-no longer needed. A zero-value client returns `ErrClosed`.
+In a service, create one client at startup, reuse it for calls to `Now`, and
+close it at shutdown. A client is safe to share between goroutines.
 
-To override paths, use `NewWithPaths(clockBoundPath, vmClockPath)`. The VMClock
-device is opened only when the daemon requests disruption detection. If it is
-required but unavailable or unreadable, calls return an error. Enabling
-VMClock support after a daemon restart is handled automatically. Once opened,
-the VMClock remains monitored even if a later daemon restart clears the flag.
+For custom paths, use `clockbound.NewWithPaths(shmPath, vmClockPath)`.
 
-## Interpreting results
+## Use the result
 
-`StatusSynchronized` and `StatusFreeRunning` allow using the returned interval.
-`StatusUnknown` and `StatusDisrupted` carry no bounded-time guarantee. Always
-check `IsTrusted`, including when `Now` returns no error.
+Always check both the error and `IsTrusted()`. A successful read can still
+return an untrusted clock status.
 
-Two event samples establish a strict real-time order only when their trusted
-intervals do not overlap:
+| Status | `IsTrusted()` | Meaning |
+| --- | --- | --- |
+| `StatusSynchronized` | `true` | The daemon reports synchronization and its calibration is still recent. |
+| `StatusFreeRunning` | `true` | The clock is free running; the interval includes accumulated uncertainty. |
+| `StatusUnknown` | `false` | A time bound is unavailable or the calibration has expired. |
+| `StatusDisrupted` | `false` | Clock continuity has been disrupted. |
+
+For a trusted result, UTC time at the sample is between `Earliest` and `Latest`.
+`ErrorBound` is half the interval width. The interval describes the time sampled
+inside `Now()`; your application may resume later.
+
+To compare two samples:
 
 ```go
-if clockbound.DefinitelyBefore(eventA, eventB) {
-    // eventA's sample definitely preceded eventB's sample.
+if clockbound.DefinitelyBefore(a, b) {
+    // Both samples are trusted, and a.Latest is before b.Earliest.
 }
 ```
 
-The interval describes the counter sample inside `Now`. Scheduling delays can
-occur before the method returns. It does not describe the later return instant
-or impose a total order on overlapping intervals.
+A `false` result means this check cannot establish that order. Intervals that
+overlap or touch cannot establish a strict order.
 
 ## Command line
 
-On a Linux host with a running daemon:
-
 ```sh
 go install github.com/rleungx/clock-bound-go/cmd/clockbound-now@latest
-"$(go env GOPATH)/bin/clockbound-now"
+clockbound-now
 ```
 
-From a source checkout, you can also run `go run ./cmd/clockbound-now`.
+Add Go's binary directory to your `PATH`: `$GOBIN` if set, otherwise
+`$(go env GOPATH)/bin`. From a source checkout, use `go run ./cmd/clockbound-now`.
 
-The command prints JSON containing `earliest`, `latest`, `status`,
-`error_bound_ns`, and `trusted`. Exit codes: `0` for a trusted result, `1` for an
-error, and `2` for an untrusted result. Flags `-shm` and `-vmclock` override paths.
+The command prints one JSON object with `earliest`, `latest`, `status`,
+`error_bound_ns`, and `trusted`. Exit codes are `0` for a trusted sample, `1` for
+an error, and `2` for an untrusted sample.
+
+Use `-shm /path/to/shm1` and `-vmclock /path/to/vmclock0` to override the paths.
 
 ## Containers
 
-Run the daemon on the container's host. Mount the host's shared-memory directory
-at the same path in the application container, with read-only access. For
-example, add this option to your container launch command:
+Run the daemon on the host and mount its shared-memory directory into the
+application container:
 
 ```sh
---mount type=bind,src=/var/run/clockbound,dst=/var/run/clockbound,readonly
+docker run --rm \
+  --mount type=bind,src=/var/run/clockbound,dst=/var/run/clockbound,readonly \
+  your-app-image
 ```
 
-When the daemon enables VMClock, also expose `/dev/vmclock0` read-only through
-your container runtime's device configuration. The container user needs read
-permission for both resources. The client never connects to a remote daemon.
-If paths differ inside the container, use `NewWithPaths` or the CLI flags.
+If the daemon enables VMClock, also add
+`--device=/dev/vmclock0:/dev/vmclock0:r`. The container user needs read access to
+both resources. Use custom client paths if they are mounted elsewhere.
 
-## Troubleshooting
+## Common issues
 
-| Symptom | Action |
-| --- | --- |
-| `ErrUnsupportedPlatform` | Run the application on Linux amd64 or arm64. macOS supports portable tests only. |
-| Opening shared memory fails | Start the daemon on this host, check the path, and grant the application read access. |
-| `ErrUnsupportedVersion` | Check the daemon's shared-memory header; this client accepts only the verified `3..3` range. |
-| VMClock open/read error | Expose the device and grant read access when the daemon requires disruption detection. |
-| `IsTrusted()` is false | Treat the sample as unavailable for bounded-time decisions; check the daemon and clock source. |
-| `ErrCounterBackwards` | Reject this sample and investigate counter continuity and daemon calibration. |
-
-For local development against an unpublished checkout, replace the module path
-with its local directory:
-
-```sh
-go mod edit -replace=github.com/rleungx/clock-bound-go=../clock-bound-go
-go get github.com/rleungx/clock-bound-go@v0.0.0
-```
-
-## Protocol and numerical behavior
-
-The shared-memory ABI was verified against AWS ClockBound commit
-[`526b8a89`](https://github.com/aws/clock-bound/tree/526b8a89d2a8b8ac461a3ab61cadc8c93d48a479)
-(ClockBound 3.0.0-beta.0). Protocol fixtures and exact-arithmetic checks cover
-calibration decoding, timestamp projection, and clock-status transitions.
-
-Counter conversion uses integer arithmetic with 192-bit intermediates. Error
-bounds round outward to cover sub-nanosecond projection uncertainty. A
-backwards hardware counter returns `ErrCounterBackwards`. Overflow or calibration
-timestamps outside years 0001..9999 return
-`ErrOutOfRange`. Returned uncertainty endpoints may extend beyond that calendar
-range when the error bound itself is exceptionally large.
-
-The reader uses acquire-ordered payload loads and the protocol's generation
-checks. It rereads the payload even if the 16-bit generation matches an old
-sample, since that number wraps. During a writer update or reset it may use
-its last calibration, expanding uncertainty and applying the daemon's expiry
-and 60-second free-running threshold. VMClock's live disruption marker is
-checked after the time sample.
-
-The daemon must preserve the mapped file/device while clients use it. If an
-operator replaces the file or device with a new inode, reopen the client;
-an existing mapping continues to reference the old object. Do not truncate a
-live shared-memory file.
-
-## Self-check
-
-```sh
-go test -race -cover ./...
-go vet ./...
-```
-
-Tests include independently generated protocol fixtures, exact `math/big`
-interval checks,
-malformed input, counter regression and overflow, expiry, generation reuse,
-concurrent external writes, VMClock changes, and concurrent close. Portable
-protocol and mapping tests run on macOS; public client constructors deliberately
-reject macOS. Linux tests also exercise native counters and the public API.
-
-The GitHub Actions workflow runs the suite on native Linux amd64 and arm64.
-These checks validate client behavior; real-daemon integration has not yet
-been verified.
+- **Cannot open shared memory:** check that the daemon is running and the
+  application can read `/var/run/clockbound/shm1`.
+- **Cannot read VMClock:** check `/dev/vmclock0` permissions and, in containers,
+  device access. VMClock is required when the daemon enables it.
+- **Unsupported version:** use a compatible v3 daemon. v1/v2 are unsupported.
+- **Untrusted result:** check the daemon and its time source. Do not use this
+  sample for decisions that depend on a bounded time interval.
 
 ## License
 
-MIT. The upstream notice is retained in `LICENSE`; see `NOTICE` for attribution.
+[MIT](LICENSE). See [NOTICE](NOTICE) for attribution.

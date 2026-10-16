@@ -25,18 +25,20 @@ Upstream reference: `aws/clock-bound` commit
 | `go vet ./...` on host and Linux amd64/arm64 targets | Passed |
 | Linux amd64/arm64 test binaries, including native-counter tests | Cross-compilation passed |
 | Linux amd64/arm64 CLI builds with `CGO_ENABLED=0` | Passed |
-| README's Go example imported by a separate module | Both Linux targets compiled |
+| README's Go example installed from the public module in a separate project | Both Linux targets compiled and passed vet |
+| Published CLI installation and help output | Passed |
 
-The command-line executable was compiled, not exercised against a daemon;
-its command dispatch has no local test coverage. The 93.6% figure applies to
+The published command-line executable was installed and its help output checked.
+It was not exercised against a daemon; its command dispatch has no automated
+local test coverage. The 93.6% figure applies to
 the client library, not the entire repository.
 
-The host cannot execute Linux binaries. Native Linux counter execution and
-real EC2/ClockBound-daemon integration were not performed locally. The included
-GitHub Actions workflow schedules native amd64 and arm64 checks when the
-repository is pushed; that workflow has not been run in this session. These
-checks do not independently establish the daemon's clock-synchronization
-accuracy.
+The host cannot execute Linux binaries. Native Linux amd64 and arm64 tests,
+including the native-counter and public-client test, passed in
+[GitHub Actions](https://github.com/rleungx/clock-bound-go/actions/runs/38879105121)
+for commit `3ecd82faeb9975b9e7eee214a3c636ab0c579c33`, with Go 1.22 and stable.
+Real EC2/ClockBound-daemon integration was not performed. These checks do not
+independently establish the daemon's clock-synchronization accuracy.
 
 See `ALIGNMENT.md` for the precise acceptance criteria, the mathematical rounding
 bound, instrumentation scope, and reproduction commands. In the local pure
