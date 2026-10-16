@@ -1,0 +1,9 @@
+[package]
+name = "clock-bound-go-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+clock-bound = { git = "https://github.com/aws/clock-bound", rev = "526b8a89d2a8b8ac461a3ab61cadc8c93d48a479", default-features = false }
+nix = "0.26"

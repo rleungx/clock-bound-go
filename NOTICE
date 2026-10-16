@@ -1,0 +1,8 @@
+This Go client implements the AWS ClockBound v3 shared-memory protocol and
+adapts its timestamp projection and daemon-status rules from:
+https://github.com/aws/clock-bound
+Upstream source reference: 526b8a89d2a8b8ac461a3ab61cadc8c93d48a479
+
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+The upstream work is available under MIT OR Apache-2.0. This project retains
+the MIT notice in LICENSE. This is an independent project, not an AWS SDK.
