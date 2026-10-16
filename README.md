@@ -90,8 +90,7 @@ To override paths, use `NewWithPaths(clockBoundPath, vmClockPath)`. The VMClock
 device is opened only when the daemon requests disruption detection. If it is
 required but unavailable or unreadable, calls return an error. Enabling
 VMClock support after a daemon restart is handled automatically. Once opened,
-the VMClock remains monitored even if a later daemon restart clears the flag,
-matching the pinned Rust client.
+the VMClock remains monitored even if a later daemon restart clears the flag.
 
 ## Interpreting results
 
@@ -163,19 +162,15 @@ go get github.com/rleungx/clock-bound-go@v0.0.0
 
 ## Protocol and numerical behavior
 
-The ABI and same-input behavior were checked against upstream commit
+The shared-memory ABI was verified against AWS ClockBound commit
 [`526b8a89`](https://github.com/aws/clock-bound/tree/526b8a89d2a8b8ac461a3ab61cadc8c93d48a479)
-(ClockBound 3.0.0-beta.0). The independent writer fixture and its reproducible
-Rust generator are under `testdata` and `tools/upstream-fixture`. There are also
-835 actual Rust projection outcomes and 21 actual Rust client trace steps.
-See [ALIGNMENT.md](ALIGNMENT.md) for acceptance criteria, reproduction commands,
-observed differences and performance limits.
+(ClockBound 3.0.0-beta.0). Protocol fixtures and exact-arithmetic checks cover
+calibration decoding, timestamp projection, and clock-status transitions.
 
 Counter conversion uses integer arithmetic with 192-bit intermediates. Error
-bounds round outward, including sub-nanosecond projection error; they may be a
-few nanoseconds wider than the Rust client's floating-point truncation. A
-backwards hardware counter returns `ErrCounterBackwards` rather than a trusted
-sample. Overflow or calibration timestamps outside years 0001..9999 return
+bounds round outward to cover sub-nanosecond projection uncertainty. A
+backwards hardware counter returns `ErrCounterBackwards`. Overflow or calibration
+timestamps outside years 0001..9999 return
 `ErrOutOfRange`. Returned uncertainty endpoints may extend beyond that calendar
 range when the error bound itself is exceptionally large.
 
@@ -198,15 +193,16 @@ go test -race -cover ./...
 go vet ./...
 ```
 
-Tests include actual Rust-writer bytes, exact `math/big` interval checks,
+Tests include independently generated protocol fixtures, exact `math/big`
+interval checks,
 malformed input, counter regression and overflow, expiry, generation reuse,
 concurrent external writes, VMClock changes, and concurrent close. Portable
 protocol and mapping tests run on macOS; public client constructors deliberately
 reject macOS. Linux tests also exercise native counters and the public API.
 
-The local check results and limits are recorded in `SELF_CHECK.md`. The supplied
-GitHub Actions workflow runs the suite on native Linux amd64 and arm64 once
-this project is pushed to GitHub.
+The GitHub Actions workflow runs the suite on native Linux amd64 and arm64.
+These checks validate client behavior; real-daemon integration has not yet
+been verified.
 
 ## License
 
