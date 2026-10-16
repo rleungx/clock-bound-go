@@ -34,6 +34,18 @@ Inside your application's Go module:
 go get github.com/rleungx/clock-bound-go@latest
 ```
 
+If the repository is private, your GitHub account must have access. Configure
+Git authentication for GitHub, then tell Go to fetch this module privately
+before running `go get`:
+
+```sh
+GOPRIVATE=github.com/rleungx/clock-bound-go go get github.com/rleungx/clock-bound-go@latest
+```
+
+If your environment already sets `GOPRIVATE`, add this module to its existing
+comma-separated patterns. Authentication and `GOPRIVATE` configuration are also
+needed when installing the CLI from a private repository.
+
 If this is a new application, run `go mod init example.com/myapp` first.
 Before a release is tagged, Go resolves `@latest` to a pseudo-version of the
 repository's default branch. Commit the resulting `go.mod` to pin that revision.
